@@ -5,6 +5,7 @@ const session = require("express-session");
 const passport = require("passport");
 const LocalStrategy = require('passport-local').Strategy;
 const dotenv = require('dotenv');
+const bcrypt = require('bcryptjs');
 dotenv.config();
 
 const pool = new Pool({
@@ -30,15 +31,29 @@ app.get("/", (req, res) => {
 app.get("/sign-up", (req, res) => res.render("sign-up-form"));
 
 app.post("/sign-up", async (req, res, next) => {
-  try {
-    await pool.query("INSERT INTO users (username, password) VALUES ($1, $2)", [
-      req.body.username,
-      req.body.password,
-    ]);
-    res.redirect("/");
-  } catch(err) {
-    return next(err);
-  }
+  const { username, password } = req.body;
+
+  // Hash de la contraseña con bcrypt
+  bcrypt.hash(password, 10, async (err, hashedPassword) => {
+    if (err) {
+      // Si ocurre un error en el hashing
+      return next(err);
+    }
+
+    try {
+      // Almacena el usuario con la contraseña cifrada
+      await pool.query("INSERT INTO users (username, password) VALUES ($1, $2)", [
+        username,
+        hashedPassword,  // Guarda la contraseña cifrada
+      ]);
+
+      // Redirige a la página de inicio o donde desees después de registrarse
+      res.redirect("/");
+
+    } catch (err) {
+      return next(err);  // Captura cualquier error de base de datos
+    }
+  });
 });
 
 passport.use(
@@ -50,9 +65,12 @@ passport.use(
       if (!user) {
         return done(null, false, { message: "Incorrect username" });
       }
-      if (user.password !== password) {
-        return done(null, false, { message: "Incorrect password" });
+      const match = await bcrypt.compare(password, user.password);
+      if (!match) {
+        // passwords do not match!
+        return done(null, false, { message: "Incorrect password" })
       }
+
       return done(null, user);
     } catch(err) {
       return done(err);
@@ -74,6 +92,12 @@ passport.deserializeUser(async (id, done) => {
     done(err);
   }
 });
+
+app.use((req, res, next) => {
+  res.locals.currentUser = req.user;
+  next();
+});
+
 
 app.get("/log-in", (req, res, next) => res.render("log-in"))
 
